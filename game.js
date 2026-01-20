@@ -6,15 +6,17 @@ canvas.height = innerHeight;
 
 let score = 0;
 let lives = 3;
+let power = null;
 let gameOver = false;
 
-const mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+const hitSound = document.getElementById("hitSound");
+const powerSound = document.getElementById("powerSound");
+const healSound = document.getElementById("healSound");
 
-window.addEventListener("mousemove", e => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
-});
+const keys = {};
 
+window.addEventListener("keydown", e => keys[e.key] = true);
+window.addEventListener("keyup", e => keys[e.key] = false);
 window.addEventListener("resize", () => {
   canvas.width = innerWidth;
   canvas.height = innerHeight;
@@ -22,24 +24,47 @@ window.addEventListener("resize", () => {
 
 class Player {
   constructor() {
+    this.x = canvas.width / 2;
+    this.y = canvas.height / 2;
     this.radius = 15;
+    this.speed = 5;
+  }
+
+  move() {
+    if (keys["w"] || keys["ArrowUp"]) this.y -= this.speed;
+    if (keys["s"] || keys["ArrowDown"]) this.y += this.speed;
+    if (keys["a"] || keys["ArrowLeft"]) this.x -= this.speed;
+    if (keys["d"] || keys["ArrowRight"]) this.x += this.speed;
+
+    this.x = Math.max(this.radius, Math.min(canvas.width - this.radius, this.x));
+    this.y = Math.max(this.radius, Math.min(canvas.height - this.radius, this.y));
   }
 
   draw() {
     ctx.beginPath();
-    ctx.arc(mouse.x, mouse.y, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#22d3ee";
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fillStyle = power === "shield" ? "#22c55e" : "#22d3ee";
     ctx.fill();
   }
 }
 
 class Enemy {
   constructor() {
-    this.radius = Math.random() * 12 + 8;
+    this.radius = Math.random() * 10 + 10;
     this.x = Math.random() * canvas.width;
     this.y = Math.random() * canvas.height;
     this.vx = (Math.random() - 0.5) * 4;
     this.vy = (Math.random() - 0.5) * 4;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+
+    if (this.x < this.radius || this.x > canvas.width - this.radius) this.vx *= -1;
+    if (this.y < this.radius || this.y > canvas.height - this.radius) this.vy *= -1;
+
+    this.draw();
   }
 
   draw() {
@@ -48,36 +73,36 @@ class Enemy {
     ctx.fillStyle = "#ef4444";
     ctx.fill();
   }
+}
 
-  update() {
-    this.x += this.vx;
-    this.y += this.vy;
+class PowerUp {
+  constructor(type) {
+    this.type = type;
+    this.radius = 10;
+    this.x = Math.random() * canvas.width;
+    this.y = Math.random() * canvas.height;
+  }
 
-    // Wall collision
-    if (this.x - this.radius < 0 || this.x + this.radius > canvas.width)
-      this.vx *= -1;
-    if (this.y - this.radius < 0 || this.y + this.radius > canvas.height)
-      this.vy *= -1;
-
-    this.draw();
+  draw() {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fillStyle = this.type === "heal" ? "#22c55e" : "#facc15";
+    ctx.fill();
   }
 }
 
-// Collision detection
 function collide(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  return distance < a.radius + b.radius;
+  return Math.hypot(dx, dy) < a.radius + b.radius;
 }
 
 const player = new Player();
 let enemies = [];
+let powerUps = [];
 
-function spawnEnemies(count) {
-  for (let i = 0; i < count; i++) {
-    enemies.push(new Enemy());
-  }
+function spawnEnemies(n) {
+  for (let i = 0; i < n; i++) enemies.push(new Enemy());
 }
 
 spawnEnemies(6);
@@ -85,11 +110,12 @@ spawnEnemies(6);
 function updateHUD() {
   document.getElementById("score").textContent = `Score: ${score}`;
   document.getElementById("lives").textContent = `Lives: ${lives}`;
+  document.getElementById("power").textContent = `Power: ${power || "None"}`;
 }
 
 function animate() {
   if (gameOver) {
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#fff";
     ctx.font = "40px sans-serif";
@@ -99,27 +125,51 @@ function animate() {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  player.move();
   player.draw();
 
-  enemies.forEach(enemy => {
-    enemy.update();
+  // Enemy logic + enemy-enemy collisions
+  enemies.forEach((e, i) => {
+    e.update();
 
-    // Player collision
-    if (collide(
-      { x: mouse.x, y: mouse.y, radius: player.radius },
-      enemy
-    )) {
-      lives--;
-      enemies = enemies.filter(e => e !== enemy);
+    for (let j = i + 1; j < enemies.length; j++) {
+      if (collide(e, enemies[j])) {
+        [e.vx, enemies[j].vx] = [enemies[j].vx, e.vx];
+        [e.vy, enemies[j].vy] = [enemies[j].vy, e.vy];
+      }
+    }
+
+    if (collide(player, e)) {
+      if (power !== "shield") {
+        lives--;
+        hitSound.play();
+      }
+      enemies.splice(i, 1);
       if (lives <= 0) gameOver = true;
+    }
+  });
+
+  // Power-ups
+  powerUps.forEach((p, i) => {
+    p.draw();
+    if (collide(player, p)) {
+      if (p.type === "heal" && lives < 5) {
+        lives++;
+        healSound.play();
+      } else {
+        power = "shield";
+        powerSound.play();
+        setTimeout(() => power = null, 5000);
+      }
+      powerUps.splice(i, 1);
     }
   });
 
   score++;
   updateHUD();
 
-  // Difficulty scaling
-  if (score % 500 === 0) enemies.push(new Enemy());
+  if (score % 600 === 0) enemies.push(new Enemy());
+  if (score % 800 === 0) powerUps.push(new PowerUp(Math.random() > 0.5 ? "heal" : "shield"));
 
   requestAnimationFrame(animate);
 }

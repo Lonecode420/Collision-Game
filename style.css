@@ -6,9 +6,7 @@ body {
   font-family: system-ui, sans-serif;
 }
 
-canvas {
-  display: block;
-}
+canvas { display: block; }
 
 .hud {
   position: fixed;
@@ -19,4 +17,3 @@ canvas {
   display: flex;
   gap: 20px;
 }
-
